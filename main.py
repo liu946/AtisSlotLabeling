@@ -3,7 +3,7 @@ import keras
 import sys
 from keras.layers import *
 import codecs, os
-RNN_HIDDEN_DIM=100
+import re
 
 def read_labels(filename):
     '''return label dictionary from a file.'''
@@ -13,6 +13,11 @@ def read_labels(filename):
             d['B-' + line.strip()] = len(d)
             d['I-' + line.strip()] = len(d)
     return d
+
+def word_preprocess(word):
+    if re.match(r'(DIGIT)+', word):
+        word = 'DIGIT'
+    return word
 
 def read_from_file(filename, word_dict, label_dict, padding_len = None):
     ''' read data from file and update word_dict automatically return matrix of input and target. '''
@@ -27,20 +32,21 @@ def read_from_file(filename, word_dict, label_dict, padding_len = None):
                 sentence, label = [], []
             else:
                 line = line.split('\t')
-                if line[0] not in word_dict:
-                    word_dict[line[0]] = len(word_dict)
-                sentence.append(word_dict[line[0]])
+                word = word_preprocess(line[0])
+                if word not in word_dict:
+                    word_dict[word] = len(word_dict)
+                sentence.append(word_dict[word])
                 label.append(label_dict[line[1]])
         if line != '':
             x.append(sentence)
             y.append(label)
     return (keras.preprocessing.sequence.pad_sequences(pad, maxlen=padding_len, dtype='int32', value=0) for pad in (x, y))
 
-def get_model(word_dict, label_dict, stn_len):
+def get_model(word_dict, label_dict, stn_len, word_dim = None, rnn_hidden = None):
     model = keras.models.Sequential()
-    model.add(keras.layers.Embedding(len(word_dict), 100, mask_zero=True))
-    model.add(Bidirectional(LSTM(RNN_HIDDEN_DIM, dropout=0.5, recurrent_dropout=0.2, return_sequences=True)))
-    model.add(TimeDistributed(Dense(len(label_dict), activation='softmax'), input_shape=(stn_len, RNN_HIDDEN_DIM)))
+    model.add(keras.layers.Embedding(len(word_dict), word_dim, mask_zero=True))
+    model.add(Bidirectional(LSTM(rnn_hidden, dropout=0.5, recurrent_dropout=0.2, return_sequences=True)))
+    model.add(TimeDistributed(Dense(len(label_dict), activation='softmax'), input_shape=(stn_len, 2 * rnn_hidden)))
     model.compile(optimizer='adam',
                   loss='sparse_categorical_crossentropy',
                   metrics=['accuracy'])
@@ -79,18 +85,18 @@ if __name__ == '__main__':
     test_X, test_Y = read_from_file(os.path.join('data', 'atis.test.txt'), word_dict, label_dict, len(train_X[0]))
     test_Y = np.expand_dims(test_Y, -1)
 
-    model = get_model(word_dict, label_dict, len(train_X[0]))
-    if len(sys.argv) != 2:
-        print('usage:\n\t./main.py <train|pred>\n\n')
+    model = get_model(word_dict, label_dict, len(train_X[0]), int(sys.argv[2]), int(sys.argv[3]))
+    if len(sys.argv) != 4:
+        print('usage:\n\t./main.py <train|pred> word_dim hidden_dim\n\n')
         exit(1)
     if sys.argv[1] == 'train':
-        model.fit(train_X, train_Y, validation_split=0.05, batch_size=32, epochs=20)
+        model.fit(train_X, train_Y, validation_split=0.05, batch_size=32, epochs=20, verbose=0)
         loss, acc = model.evaluate(test_X, test_Y, batch_size=32)
-        model.save('simple.model')
+        model.save('atis-' + '-'.join(sys.argv[2:]) +'.model')
         print('loss=%f, acc=%f' % (loss, acc))
     elif sys.argv[1] == 'pred':
-        model.load_weights('simple.model')
+        model.load_weights('atis-' + '-'.join(sys.argv[2:]) +'.model')
 
     test_pred = model.predict(test_X, batch_size=32)
     test_pred = np.argmax(test_pred, axis=-1)
-    save_pred(test_pred, label_dict, os.path.join('data', 'atis.test.txt'), os.path.join('pred.out'))
+    save_pred(test_pred, label_dict, os.path.join('data', 'atis.test.txt'), os.path.join('pred-' + '-'.join(sys.argv[2:]) + '.out'))

@@ -17,3 +17,9 @@
 ```
 ./main.py train
 ```
+
+# eval
+
+```
+./eval/conlleval.pl -d "\t" < pred.out
+```
